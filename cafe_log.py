@@ -1,13 +1,39 @@
+import os
+# macOSのダークモードを無効にする複数の方法
+os.environ['TK_SILENCE_DEPRECATION'] = '1'
+os.environ['TKINTER_DARK_MODE'] = '0'
+os.environ['_TKINTER_DARK_MODE'] = '0'
+os.environ['TKINTER_APPEARANCE'] = 'light'
+os.environ['_TKINTER_APPEARANCE'] = 'light'
+
+# macOSの外観設定を強制的にライトモードに変更
+try:
+    import subprocess
+    subprocess.run(['defaults', 'write', '-g', 'AppleInterfaceStyle', '-string', 'Light'], 
+                   capture_output=True, check=False)
+except:
+    pass
+
 import sqlite3
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.dates as mdates
+import matplotlib.font_manager as fm
+
+# 日本語フォント設定（利用可能なフォントのみ）
+plt.rcParams['font.family'] = ['Hiragino Sans', 'YuGothic', 'Apple SD Gothic Neo', 'AppleGothic', 'BIZ UDGothic']
+plt.rcParams['axes.unicode_minus'] = False  # マイナス記号の文字化けを防ぐ
 
 DB_NAME = "cafe_log.db"
-HOURLY_RATE = 500  # 1時間あたりのカフェ代（円）
+DEFAULT_HOURLY_RATE = 500  # デフォルトの1時間あたりのカフェ代（円）
+
+# picディレクトリの作成
+PIC_DIR = "pic"
+if not os.path.exists(PIC_DIR):
+    os.makedirs(PIC_DIR)
 
 # DB初期化
 def init_db():
@@ -32,7 +58,141 @@ def start_session():
     conn.close()
     messagebox.showinfo("開始", f"作業開始: {now}")
 
-# 作業終了
+# カフェ代入力ダイアログ（超強制ライトモード版）
+def get_cafe_cost(duration_minutes, default_cost):
+    # 新しいルートウィンドウを作成
+    dialog = tk.Tk()
+    dialog.title("カフェ代入力")
+    dialog.geometry("600x350")
+    dialog.resizable(False, False)
+    
+    # 強制的にライトモードの色を設定
+    dialog.configure(bg="white")
+    
+    # 中央に配置
+    dialog.geometry("+%d+%d" % (root.winfo_rootx() + 100, root.winfo_rooty() + 100))
+    
+    result = {"cost": None}
+    
+    # メインフレーム
+    main_frame = tk.Frame(dialog, padx=50, pady=50, bg="white")
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # 作業時間表示
+    duration_hours = duration_minutes / 60
+    time_label = tk.Label(main_frame, text=f"作業時間: {duration_minutes}分 ({duration_hours:.1f}時間)", 
+                         font=("Arial", 16, "bold"), bg="white", fg="black")
+    time_label.pack(pady=(0, 25))
+    
+    # 金額入力ラベル
+    cost_label = tk.Label(main_frame, text="カフェ代を入力してください（円）:", 
+                         font=("Arial", 14), bg="white", fg="black")
+    cost_label.pack(pady=(0, 15))
+    
+    # 入力フィールド用のフレーム
+    entry_frame = tk.Frame(main_frame, bg="white")
+    entry_frame.pack(pady=(0, 25))
+    
+    # 金額入力フィールド（超強制的に白背景）
+    cost_var = tk.StringVar(value=str(default_cost))
+    cost_entry = tk.Entry(entry_frame, textvariable=cost_var, 
+                         font=("Arial", 20, "bold"), width=10,
+                         bg="white", fg="black", 
+                         insertbackground="black", 
+                         relief="solid", bd=4,
+                         highlightthickness=4,
+                         highlightcolor="blue",
+                         highlightbackground="gray",
+                         justify="center")
+    cost_entry.pack()
+    
+    # 入力値の確認表示
+    def update_preview(*args):
+        try:
+            value = cost_var.get()
+            preview_label.config(text=f"入力値: {value}円", fg="blue")
+        except:
+            preview_label.config(text="入力値: エラー", fg="red")
+    
+    cost_var.trace('w', update_preview)
+    preview_label = tk.Label(main_frame, text=f"入力値: {default_cost}円", 
+                            font=("Arial", 14), bg="white", fg="blue")
+    preview_label.pack(pady=(0, 25))
+    
+    # ボタンフレーム
+    button_frame = tk.Frame(main_frame, bg="white")
+    button_frame.pack()
+    
+    def ok_clicked():
+        try:
+            cost = int(cost_var.get())
+            if 0 <= cost <= 10000:
+                result["cost"] = cost
+                dialog.quit()
+            else:
+                messagebox.showerror("エラー", "金額は0円以上10,000円以下で入力してください")
+        except ValueError:
+            messagebox.showerror("エラー", "正しい数値を入力してください")
+    
+    def cancel_clicked():
+        dialog.quit()
+    
+    # OKボタン
+    ok_button = tk.Button(button_frame, text="OK", command=ok_clicked, 
+                         width=15, bg="blue", fg="white", font=("Arial", 14, "bold"),
+                         relief="flat", bd=0, padx=20, pady=10)
+    ok_button.pack(side=tk.LEFT, padx=(0, 20))
+    
+    # キャンセルボタン
+    cancel_button = tk.Button(button_frame, text="キャンセル", command=cancel_clicked, 
+                             width=15, font=("Arial", 14), bg="lightgray", fg="black",
+                             relief="flat", bd=0, padx=20, pady=10)
+    cancel_button.pack(side=tk.LEFT)
+    
+    # EnterキーでOK
+    def on_enter(event):
+        ok_clicked()
+    
+    cost_entry.bind('<Return>', on_enter)
+    
+    # フォーカスを設定
+    cost_entry.focus()
+    cost_entry.select_range(0, tk.END)
+    
+    # ダイアログが閉じられるまで待機
+    dialog.mainloop()
+    
+    # 結果を取得してダイアログを破棄
+    cost = result["cost"]
+    dialog.destroy()
+    
+    return cost
+
+# カフェ代入力（ターミナル版）
+def get_cafe_cost_terminal(duration_minutes, default_cost):
+    print(f"\n=== カフェ代入力 ===")
+    print(f"作業時間: {duration_minutes}分 ({duration_minutes/60:.1f}時間)")
+    print(f"デフォルト金額: {default_cost}円")
+    
+    while True:
+        try:
+            user_input = input(f"カフェ代を入力してください（円）[{default_cost}]: ").strip()
+            
+            if user_input == "":
+                return default_cost
+            
+            cost = int(user_input)
+            if 0 <= cost <= 10000:
+                return cost
+            else:
+                print("エラー: 金額は0円以上10,000円以下で入力してください")
+        except ValueError:
+            print("エラー: 正しい数値を入力してください")
+        except KeyboardInterrupt:
+            print("\nキャンセルされました")
+            return None
+
+# 作業終了（改良版）
 def end_session():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -46,8 +206,23 @@ def end_session():
         log_id, start_time_str = row
         start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
         duration = int((now - start_time).total_seconds() / 60)
-        cost = int((duration / 60) * HOURLY_RATE)
-
+        
+        # カフェ代の金額を入力
+        duration_hours = duration / 60
+        default_cost = int(duration_hours * DEFAULT_HOURLY_RATE)
+        
+        # まずGUIダイアログを試す
+        try:
+            cost = get_cafe_cost(duration, default_cost)
+        except Exception as e:
+            print(f"GUIダイアログエラー: {e}")
+            # GUIダイアログが失敗した場合はターミナルで入力
+            cost = get_cafe_cost_terminal(duration, default_cost)
+        
+        if cost is None:  # キャンセルされた場合
+            conn.close()
+            return
+        
         c.execute("UPDATE logs SET end_time=?, duration_minutes=?, cost=? WHERE id=?",
                   (now_str, duration, cost, log_id))
         conn.commit()
@@ -97,26 +272,36 @@ def show_daily_chart():
     dates = [datetime.strptime(row[0], "%Y-%m-%d") for row in data]
     minutes = [row[1] for row in data]
     
-    ax.plot(dates, minutes, marker='o', linewidth=2, markersize=6, color='#2E86AB')
+    # 棒グラフに変更
+    ax.bar(dates, minutes, color='#2E86AB', alpha=0.7, width=0.8)
     ax.set_title('過去30日間の作業時間推移', fontsize=14, fontweight='bold')
     ax.set_xlabel('日付', fontsize=12)
     ax.set_ylabel('作業時間（分）', fontsize=12)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, axis='y')
     
     # 日付フォーマット
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
     plt.xticks(rotation=45)
     
     plt.tight_layout()
     
-    # 新しいウィンドウで表示
-    chart_window = tk.Toplevel(root)
-    chart_window.title("作業時間推移グラフ")
+    # ファイルに保存して開く
+    filename = os.path.join(PIC_DIR, "daily_chart.png")
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()  # メモリを解放
     
-    canvas = FigureCanvasTkAgg(fig, chart_window)
-    canvas.draw()
-    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    # デフォルトアプリケーションで開く
+    import subprocess
+    import platform
+    if platform.system() == 'Darwin':  # macOS
+        subprocess.run(['open', filename])
+    elif platform.system() == 'Windows':
+        subprocess.run(['start', filename], shell=True)
+    else:  # Linux
+        subprocess.run(['xdg-open', filename])
+    
+    messagebox.showinfo("完了", f"グラフを保存しました: {filename}")
 
 # 月別集計グラフ
 def show_monthly_chart():
@@ -169,13 +354,22 @@ def show_monthly_chart():
     
     plt.tight_layout()
     
-    # 新しいウィンドウで表示
-    chart_window = tk.Toplevel(root)
-    chart_window.title("月別集計グラフ")
+    # ファイルに保存して開く
+    filename = os.path.join(PIC_DIR, "monthly_chart.png")
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()  # メモリを解放
     
-    canvas = FigureCanvasTkAgg(fig, chart_window)
-    canvas.draw()
-    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    # デフォルトアプリケーションで開く
+    import subprocess
+    import platform
+    if platform.system() == 'Darwin':  # macOS
+        subprocess.run(['open', filename])
+    elif platform.system() == 'Windows':
+        subprocess.run(['start', filename], shell=True)
+    else:  # Linux
+        subprocess.run(['xdg-open', filename])
+    
+    messagebox.showinfo("完了", f"グラフを保存しました: {filename}")
 
 # GUI
 init_db()
